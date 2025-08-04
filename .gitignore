@@ -1,1 +1,39 @@
-.venv
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+
+# Temporary files
+*.tmp
+*.log
+/tmp/ollama-port-forward.pid
+
+# Generated documentation
+**/README.md.backup
+**/README.generated.md
+
+# Kubernetes secrets
+*.secret.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Training outputs
+training/Modelfile.backup
+training/*.backup

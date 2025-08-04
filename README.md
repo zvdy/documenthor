@@ -130,6 +130,10 @@ make logs          # View Ollama logs
 make benchmark     # Test performance
 make restart       # Restart all services
 make clean         # Clean up everything
+make health        # Comprehensive health check
+make maintain      # Run maintenance tasks
+make optimize      # Optimize system performance
+make backup        # Backup configuration and models
 ```
 
 ## Fine-Tuning
@@ -194,6 +198,30 @@ make port-forward
 
 # Check status
 make status
+```
+
+### Performance Issues
+```bash
+# Run comprehensive health check
+make health
+
+# Clean up unused models and cache
+make optimize
+
+# Check model performance
+make perf-test
+```
+
+### Maintenance
+```bash
+# Regular maintenance
+make maintain     # Cleanup, optimization, dependency checks
+
+# Create backups
+make backup       # Backup models and configuration
+
+# Clean specific items
+make clean-models # Remove unused models
 ```
 
 ## System Requirements

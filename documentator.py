@@ -8,6 +8,7 @@ import sys
 import json
 import click
 import requests
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 from dotenv import load_dotenv
@@ -39,26 +40,70 @@ class OllamaClient:
         if system_prompt:
             payload["system"] = system_prompt
         
+        start_time = time.time()
         try:
             response = requests.post(url, json=payload, timeout=300)
             response.raise_for_status()
             result = response.json()
+            
+            generation_time = time.time() - start_time
+            click.echo(f"✅ Generated in {generation_time:.2f}s", err=True)
+            
             return result.get("response", "")
+        except requests.exceptions.Timeout:
+            click.echo("❌ Request timed out. The model might be processing a large repository.", err=True)
+            sys.exit(1)
+        except requests.exceptions.ConnectionError:
+            click.echo("❌ Cannot connect to Ollama. Make sure it's running and port forwarding is active.", err=True)
+            click.echo("Try: make port-forward", err=True)
+            sys.exit(1)
         except requests.exceptions.RequestException as e:
-            click.echo(f"Error communicating with Ollama: {e}", err=True)
+            click.echo(f"❌ Error communicating with Ollama: {e}", err=True)
             sys.exit(1)
     
     def list_models(self) -> List[str]:
-        """List available models"""
+        """List available models with enhanced information"""
         url = f"{self.host}/api/tags"
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
             result = response.json()
-            return [model["name"] for model in result.get("models", [])]
-        except requests.exceptions.RequestException as e:
-            click.echo(f"Error listing models: {e}", err=True)
+            models = []
+            for model in result.get("models", []):
+                name = model.get("name", "")
+                size = model.get("size", 0)
+                size_gb = size / (1024**3) if size else 0
+                models.append(f"{name} ({size_gb:.1f}GB)")
+            return models
+        except requests.exceptions.RequestException:
             return []
+    
+    def auto_select_model(self) -> str:
+        """Automatically select the best available model"""
+        models = self.list_models()
+        model_names = [m.split(' ')[0] for m in models]
+        
+        # Priority order: fine-tuned models first, then base models
+        priority_models = [
+            "documenthor-gpu:latest",
+            "documenthor:latest", 
+            "llama3.2:3b",
+            "llama3:8b",
+            "codellama:7b"
+        ]
+        
+        for preferred_model in priority_models:
+            if preferred_model in model_names:
+                click.echo(f"🤖 Using model: {preferred_model}", err=True)
+                return preferred_model
+        
+        if model_names:
+            selected = model_names[0]
+            click.echo(f"🤖 Using available model: {selected}", err=True)
+            return selected
+        
+        click.echo("❌ No models available. Run 'make pull-model' first.", err=True)
+        sys.exit(1)
 
 class RepositoryAnalyzer:
     def __init__(self, repo_path: str):
@@ -453,7 +498,11 @@ Return the complete updated README."""
 def main(repo_path: str, output: str, model: str, mode: str, list_models: bool):
     """Documenthor - AI Repository Documentation Generator"""
     
-    # Initialize Ollama client
+    # Initialize Ollama client with auto-model detection
+    if not model:
+        temp_client = OllamaClient()
+        model = temp_client.auto_select_model()
+    
     ollama = OllamaClient(model=model)
     
     if list_models:

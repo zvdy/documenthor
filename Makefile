@@ -160,20 +160,24 @@ status: ## Show status of all components
 	@echo "=================="
 	@echo ""
 	@ echo -e "$(YELLOW)minikube:$(NC)"
-	@minikube status || echo "$(RED)minikube not running$(NC)"
+	@minikube status || echo -e "$(RED)minikube not running$(NC)"
 	@echo ""
 	@ echo -e "$(YELLOW)Kubernetes:$(NC)"
-	@kubectl get pods -n ollama 2>/dev/null || echo "$(RED)Ollama namespace not found$(NC)"
+	@kubectl get pods -n ollama 2>/dev/null || echo -e "$(RED)Ollama namespace not found$(NC)"
 	@echo ""
 	@ echo -e "$(YELLOW)Port forwarding:$(NC)"
 	@if [ -f /tmp/ollama-port-forward.pid ] && kill -0 $$(cat /tmp/ollama-port-forward.pid) 2>/dev/null; then \
-		echo "$(GREEN)✅ Active (PID: $$(cat /tmp/ollama-port-forward.pid))$(NC)"; \
+		echo -e "$(GREEN)✅ Active (PID: $$(cat /tmp/ollama-port-forward.pid))$(NC)"; \
 	else \
-		echo "$(RED)❌ Not active$(NC)"; \
+		echo -e "$(RED)❌ Not active$(NC)"; \
 	fi
 	@echo ""
 	@ echo -e "$(YELLOW)Ollama API:$(NC)"
-	@curl -s http://localhost:11434/api/tags >/dev/null 2>&1 && echo "$(GREEN)✅ Accessible$(NC)" || echo "$(RED)❌ Not accessible$(NC)"
+	@if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then \
+		echo -e "$(GREEN)✅ Accessible$(NC)"; \
+	else \
+		echo -e "$(RED)❌ Not accessible$(NC)"; \
+	fi
 
 # Show logs
 logs: ## Show Ollama deployment logs
@@ -198,11 +202,76 @@ gpu-info: ## Show GPU information
 install-nvidia-toolkit: ## Install NVIDIA Container Toolkit (Ubuntu/Debian only)
 	@ echo -e "$(YELLOW)Installing NVIDIA Container Toolkit...$(NC)"
 	@curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-	@curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-		sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-		sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+	@curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 	@sudo apt-get update
 	@sudo apt-get install -y nvidia-container-toolkit
 	@sudo nvidia-ctk runtime configure --runtime=docker
 	@sudo systemctl restart docker
 	@ echo -e "$(GREEN)✅ NVIDIA Container Toolkit installed$(NC)"
+
+# Model management
+clean-models: ## Remove unused Ollama models to free space
+	@ echo -e "$(YELLOW)Cleaning up unused models...$(NC)"
+	@kubectl exec -n ollama deployment/ollama -- ollama list | grep -v "NAME" | awk '{print $$1}' | grep -v "llama3.2:3b\|documenthor-gpu:latest" | xargs -r -I {} kubectl exec -n ollama deployment/ollama -- ollama rm {}
+	@ echo -e "$(GREEN)✅ Unused models removed$(NC)"
+
+# Backup current models
+backup-models: ## Backup current fine-tuned models
+	@ echo -e "$(YELLOW)Backing up models...$(NC)"
+	@mkdir -p backups/models/$(shell date +%Y-%m-%d)
+	@kubectl exec -n ollama deployment/ollama -- ollama list | grep documenthor | awk '{print $$1}' > backups/models/$(shell date +%Y-%m-%d)/model-list.txt
+	@ echo -e "$(GREEN)✅ Model list backed up to backups/models/$(shell date +%Y-%m-%d)/$(NC)"
+
+# Health check
+health: ## Comprehensive health check of the system
+	@ echo -e "$(YELLOW)Running health checks...$(NC)"
+	@echo ""
+	@ echo -e "$(YELLOW)1. GPU Status:$(NC)"
+	@nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits | head -1 || echo -e "$(RED)No GPU found$(NC)"
+	@echo ""
+	@ echo -e "$(YELLOW)2. minikube Status:$(NC)"
+	@minikube status | grep -E "(host|kubelet|apiserver)" || echo -e "$(RED)minikube issues$(NC)"
+	@echo ""
+	@ echo -e "$(YELLOW)3. Ollama API:$(NC)"
+	@if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then \
+		echo -e "$(GREEN)✅ API responsive$(NC)"; \
+	else \
+		echo -e "$(RED)❌ API not responding$(NC)"; \
+	fi
+	@echo ""
+	@ echo -e "$(YELLOW)4. Model Status:$(NC)"
+	@if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then \
+		curl -s http://localhost:11434/api/tags | jq -r '.models[] | select(.name=="documenthor-gpu:latest" or .name=="llama3.2:3b") | .name + " (" + (.size/1024/1024/1024|tostring|.[0:4]) + "GB)"' 2>/dev/null || echo -e "$(YELLOW)Models found but jq not available$(NC)"; \
+	else \
+		echo -e "$(RED)Models not accessible$(NC)"; \
+	fi
+
+# Performance test
+perf-test: ## Run performance tests with different repository sizes
+	@ echo -e "$(YELLOW)Running performance tests...$(NC)"
+	@echo "Small repo (Express auth service):"
+	@time .venv/bin/python documentator.py --repo-path training/repositories/express-auth-service --model documenthor-gpu:latest --generate > /dev/null 2>&1
+	@echo "Medium repo (Go product service):"
+	@time .venv/bin/python documentator.py --repo-path training/repositories/go-product-service --model documenthor-gpu:latest --generate > /dev/null 2>&1
+	@ echo -e "$(GREEN)✅ Performance tests completed$(NC)"
+
+# Maintenance commands
+maintain: ## Run comprehensive maintenance (cleanup, optimization, checks)
+	@ echo -e "$(YELLOW)Running maintenance tasks...$(NC)"
+	@.venv/bin/python maintenance.py clean-cache
+	@.venv/bin/python maintenance.py optimize-training
+	@.venv/bin/python maintenance.py check-dependencies
+	@ echo -e "$(GREEN)✅ Maintenance completed$(NC)"
+
+backup: ## Backup configuration and models
+	@ echo -e "$(YELLOW)Creating backups...$(NC)"
+	@.venv/bin/python maintenance.py backup-config
+	@make backup-models
+	@ echo -e "$(GREEN)✅ Backup completed$(NC)"
+
+optimize: ## Optimize system performance and clean up
+	@ echo -e "$(YELLOW)Optimizing system...$(NC)"
+	@make clean-models
+	@.venv/bin/python maintenance.py clean-cache
+	@.venv/bin/python maintenance.py optimize-training
+	@ echo -e "$(GREEN)✅ System optimized$(NC)"
